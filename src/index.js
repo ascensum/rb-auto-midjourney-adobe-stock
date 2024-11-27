@@ -5,6 +5,9 @@ const { paramsGeneratorModule } = require("./paramsGeneratorModule");
 const { producePictureModule } = require("./producePictureModule");
 const { uploadPictureModule } = require("./uploadPictureModule");
 require("dotenv").config();
+const Configuration = require('./paramsGeneratorModule'); // Adjust the path as needed
+const configuration = new Configuration({ apiKey: process.env.OPENAI_API_KEY });
+const openai = new OpenAIApi(configuration);
 
 (async () => {
   const today = new Date();

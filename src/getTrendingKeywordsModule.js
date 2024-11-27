@@ -13,7 +13,7 @@ async function getTrendingKeywordsModule(formattedDate) {
   try {
     const browser = await puppeteer.launch({
       args: ["--no-sandbox", "--disable-setuid-sandbox"],
-      headless: true,
+      headless: "new",
     });
     const page = await browser.newPage();
     await page.goto(process.env.REDBUBBLE_URL, { waitUntil: "networkidle2" });

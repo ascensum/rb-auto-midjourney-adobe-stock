@@ -21,12 +21,22 @@ const paramsGeneratorModule = async(trendingKeywords) => {
   let params = {};
   let uploadKeywords = "";
 
+  /**
   const configuration = new Configuration({
     apiKey: process.env.OPENAI_API_KEY,
   });
   const openai = new OpenAIApi(configuration);
-
+ */
+  
+  class Configuration {
+    constructor({ apiKey }) {
+      this.apiKey = apiKey;
+    }
+  }
+  
+  module.exports = Configuration;
   // Adding 0, 1 or 2 characters
+  
   const charactersSet = new Set();
   let keyword;
   for (let i = 0; i < characterCount; i++) {
