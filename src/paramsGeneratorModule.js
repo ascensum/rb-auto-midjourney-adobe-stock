@@ -1,133 +1,86 @@
-const { KEYWORDS, BOOSTER_KEYWORDS, STYLE_KEYWORD, TYPE_KEYWORD } = require('./constant/keywords');
-const { Configuration, OpenAIApi } = require("openai");
+//const { KEYWORDS } = require('./constant/keywords');
+const { KEYWORDS} = require('./constant/keywords_mixed');
+const { OpenAI } = require("openai");
 require('dotenv').config()
 
-/**
- * Generate pictures settings translated in every langages, by ChatGPT
- * Not using trendingKeywords currently
- * 
- * @param {Array} trendingKeywords Trending keywords of the day of upload
- * @return {Object}
- */
-const paramsGeneratorModule = async(trendingKeywords) => {
-  const maxKeyword = 50;
-  const maxKeywordLength = 255;
-  const characterCount = Math.random() < 0.1 ? 0 : Math.random() > 0.9 ? 2 : 1;
+const openai = new OpenAI({
+  apiKey: process.env.OPENAI_API_KEY,
+});
 
-  const booster = BOOSTER_KEYWORDS[Math.floor(Math.random() * BOOSTER_KEYWORDS.length)];
-  const type = TYPE_KEYWORD[0];
+let currentKeywordIndex = 0; // Initialize the keyword index
 
-  const keywords = [];
-  let params = {};
-  let uploadKeywords = "";
+const paramsGeneratorModule = async() => {
+  let allKeywords = [...new Set([...KEYWORDS.character])];
+  
+  const keywordRandomFlag = process.env.KEYWORD_RANDOM === 'true';
 
-  /**
-  const configuration = new Configuration({
-    apiKey: process.env.OPENAI_API_KEY,
-  });
-  const openai = new OpenAIApi(configuration);
- */
-  
-  class Configuration {
-    constructor({ apiKey }) {
-      this.apiKey = apiKey;
-    }
-  }
-  
-  module.exports = Configuration;
-  // Adding 0, 1 or 2 characters
-  
-  const charactersSet = new Set();
   let keyword;
-  for (let i = 0; i < characterCount; i++) {
-    while (!keyword || charactersSet.has(keyword)) {
-      keyword = KEYWORDS.character[Math.floor(Math.random() * KEYWORDS.character.length)];
-    }
 
-    keywords.push(keyword.charAt(0).toUpperCase() + keyword.slice(1));
-    charactersSet.add(keyword);
+  if (keywordRandomFlag) {
+    // Random mode
+    allKeywords = shuffleArray(allKeywords);
+    keyword = allKeywords[Math.floor(Math.random() * allKeywords.length)];
+  } else {
+    // Sequential mode
+    keyword = allKeywords[currentKeywordIndex];
+    currentKeywordIndex = (currentKeywordIndex + 1) % allKeywords.length; // Increment index and wrap around if necessary
   }
 
-  // Adding an event if no character
-  if (!characterCount) {
-    keyword = KEYWORDS.event[Math.floor(Math.random() * KEYWORDS.event.length)];
-    keywords.push(keyword.charAt(0).toUpperCase() + keyword.slice(1));
-  }
+  // Generate prompt using GPT-4-mini
+  const prompt = await generatePrompt(keyword);
 
-  // Adding a location
-  keyword = KEYWORDS.location[Math.floor(Math.random() * KEYWORDS.location.length)];
-  keywords.push(keyword.charAt(0).toUpperCase() + keyword.slice(1));
+  const params = {
+    prompt: prompt // The complete prompt for Flux .1 dev
+  };
 
-  // Adding a style
-  let style;
-  let isCharacterStyle;
-  while (!style || isCharacterStyle && !characterCount) {
-    style = STYLE_KEYWORD[Math.floor(Math.random() * STYLE_KEYWORD.length)];
-    isCharacterStyle = style.style.toLowerCase().includes("face") || style.style.toLowerCase().includes("character") || style.style.toLowerCase().includes("psycho") || style.style.toLowerCase().includes("caricature") || style.style.toLowerCase().includes("portrait");
-  }
-
-  // QUERIES OPENAI (Title, Description)
-  const roleText = "Tu es un redacteur web polyglote connu pour la qualité de tes textes d'un point de vue compréhension et optimisation du référencement naturel.";
-  const keywordsText = `Les mots clés à utiliser pour créer ton texte sont: ${keywords}`;
-
-  const titleMessages = [
-    {"role": "system", "content": roleText},
-    {"role": "user", "content": `Je veux que tu inventes un texte de entre 5 et 6 mots. Ce titre sera un titre logique d'une scène d'image de ${style.style}, et devra inclure tous les mots clés renseignés, et des adjectifs mélioratifs. Ce texte devra être traduis en anglais, allemand, français et espagnol sous la forme d'un objet javascript en ajoutant les traductions dans les clés "en", "de", "fr", "es". Ta réponse ne contiendra que cet objet.`},
-    {"role": "user", "content": `Exemple: {"en": "My title", "de": "Mein Titel", "fr": "Mon titre", "es": "Mi título"}`},
-    {"role": "user", "content": keywordsText}
-  ]
-  const queryTitle = await openai.createChatCompletion({
-    model: "gpt-3.5-turbo",
-    messages: titleMessages
-  });
-  const descMessages = [
-    {"role": "system", "content": roleText},
-    {"role": "user", "content": `Je veux que tu inventes un texte de entre 250 et 300 caractères, en incluant les mots clés renseignés, qui va décrire une image de ${type} à partir de mots clés. Ce texte devra être traduis en anglais, allemand, français et espagnol sous la forme d'un objet javascript en ajoutant les traductions dans les clés "en", "de", "fr", "es". Ta réponse ne contiendra que cet objet.`},
-    {"role": "user", "content": `Exemple: {"en": "My description", "de": "Mein Beschreibung", "fr": "Ma description", "es": "Mi descripción"}`},
-    {"role": "user", "content": keywordsText}
-  ]
-  const queryDescription = await openai.createChatCompletion({
-    model: "gpt-3.5-turbo",
-    messages: descMessages
-  });
-
-  let queryResults = await Promise.all([queryTitle, queryDescription])
-  
-  keywords.push(style.style);
-
-  let title = queryResults[0].data.choices[0].message.content
-  let description = queryResults[0].data.choices[0].message.content;
-
-  for (let i = 0; i < maxKeyword; i++) {
-    const keyIndex = i % keywords.length;
-    const keyword = keywords[keyIndex];
-    let singleSpam = "";
-
-    while (`${singleSpam} ${keyword}`.length < maxKeywordLength - 2) {
-      singleSpam += `${keyword} `;
-    }
-
-    if (singleSpam.length > 0) {
-      singleSpam = singleSpam.slice(0, singleSpam.length - 1);
-    }
-
-    uploadKeywords += `${singleSpam} ${i},`
-  } 
-
-  if (uploadKeywords.length > 0) {
-    uploadKeywords = uploadKeywords.slice(0, uploadKeywords.length - 1);
-  }
-
-  params = {
-    keywords,
-    type,
-    style,
-    title: {booster, title: JSON.parse(title)},
-    description: JSON.parse(description),
-    uploadKeywords
-  }
-
+  console.log("Raw Params object from ParamsGeneratorModule", params);
   return params;
+}
+
+async function generatePrompt(keyword) {
+  const systemPrompt =   `You are a prompt generation assistant specialized in crafting detailed and optimized text inputs for FLUX AI image generation. Based on user-provided keywords or ideas, your task is to create stunning and precise prompts. Ensure the prompts are tailored to FLUX AI's advanced capabilities, including photorealism, texture accuracy, and style variations. Obey the following guidelines:
+
+  - Subject Description: Start with a detailed and vivid description of the primary subject.
+  - Artistic or Photographic Style: Clearly specify a style. ( e.g., realism, impressionism, post-impressionism, romanticism, neoclassicism, baroque, renaissance, gothic, mannerism, rococo, expressionism, cubism, fauvism, abstract art, surrealism, pop art, minimalism, 
+    abstract expressionism, dadaism, constructivism, de stijl, folk art, chinese ink painting, japanese ukiyo-e, indian miniature painting, islamic art, african tribal art, street art, digital painting, photorealism, fantasy art, visionary art, naïve art, outsider art)."
+  - Specify the type of image (e.g., digital illustration, vector art, flat art, isometric art, 3D rendering, pixel art, low poly art, line art, gradient art, concept art, character design, storyboard art, matte painting, infographic art, motion graphics, collage art, anime/manga art, comic book art, fantasy art, 
+    sci-fi art).
+  - Attributes and Details: Describe key features, colors, materials, or textures. For example, "glossy surfaces," "gold accents," or "rustic wood textures."
+  - Lighting and Environment: Add depth by specifying the environment, time of day, weather, or specific lighting conditions (e.g., "soft ambient glow," "dramatic backlight").
+  - Mood and Atmosphere: Include emotive or thematic elements, such as "serene and peaceful," "dramatic and intense," or "whimsical and magical."
+  - Technical Enhancements: Use keywords for FLUX features, such as "8K resolution," "ultra-sharp detail," "HDR lighting," "macro focus," or "bokeh effect."
+  - Dynamic Elements: If applicable, include motion or energy in the scene, like "flowing water," "wind-swept hair," or "dancing flames."
+  - The prompt should be in English.
+  - Do not describe concepts as "Real", "realistic", "photo", or "photograph" if they can't be real.
+  - Choose the best image type and art style for the given keyword.
+  - Do not use any words that are before : character in the prompt guidelines`;
+
+  const userMessage = `Create a detailed description of the image, including all elements, styles, and enhancements for FLUX AI using the above formula with a ${keyword} as 'Subject Description' in prompt structure. The tone should be inspiring, clear, and precise.`;
+
+  try {
+    const response = await openai.chat.completions.create({
+      model: "gpt-4o-mini", // Ensure this is the correct model name
+      messages: [
+        { role: "system", content: systemPrompt },
+        { role: "user", content: userMessage }
+      ],
+      temperature: 0.7,
+    });
+
+    const generatedPrompt = response.choices[0].message.content;
+    return generatedPrompt;
+  } catch (error) {
+    console.error("Error generating prompt:", error);
+    return ""; // Return an empty string or a default prompt in case of error
+  }
+}
+
+function shuffleArray(array) {
+  for (let i = array.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [array[i], array[j]] = [array[j], array[i]];
+  }
+  return array;
 }
 
 module.exports = {

@@ -1,0 +1,6 @@
+{
+    "ignore": [
+      "src/keywords_data_raw/trending_keywords_data_raw_*.json", 
+      "src/keywords_data/trending_keywords_data_*.json"
+    ]
+}
