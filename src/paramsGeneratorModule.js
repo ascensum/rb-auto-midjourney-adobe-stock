@@ -1,5 +1,5 @@
 //const { KEYWORDS } = require('./constant/keywords');
-const { KEYWORDS} = require('./constant/keywords_mixed');
+const { KEYWORDS} = require('./constant/keywords_trending_2024.12.01');
 const { OpenAI } = require("openai");
 require('dotenv').config()
 

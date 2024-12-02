@@ -1,13 +1,16 @@
+const path = require('path');
+require('dotenv').config({ path: path.resolve(__dirname, '../.env') });
+
 const puppeteer = require('puppeteer-extra');
 const StealthPlugin = require('puppeteer-extra-plugin-stealth');
 const fs = require('fs');
-const path = require('path');
-const dotenv = require('dotenv');
-dotenv.config();
+const fsPromises = fs.promises;
+
+puppeteer.use(StealthPlugin());
 
 function delay(time) {
   return new Promise(function(resolve) { 
-    setTimeout(resolve, time)
+    setTimeout(resolve, time);
   });
 }
 
@@ -111,6 +114,9 @@ async function getTrendingKeywordsDataModule(filePath) {
 
     const url = process.env.REDBUBBLE_TRENDS_URL;
     const baseUrl = process.env.REDBUBBLE_TRENDS_URL_BASE_URL;
+
+    console.log('URL:', process.env.REDBUBBLE_TRENDS_URL);
+    console.log('BASE_URL:', process.env.REDBUBBLE_TRENDS_URL_BASE_URL);
 
     if (!url || !baseUrl) {
       console.error("ERROR: URL or BASE_URL is not defined in the .env file");
@@ -355,7 +361,7 @@ function deleteOldFilesModule(dirPath) {
 
 // Run the module directly if this file is executed
 if (require.main === module) {
-  checkAndRunModule().catch(error => {
+  checkTrendingKeywordsAgeModule().catch(error => {
     console.error("ERROR: An unhandled error occurred", error);
     process.exit(1);
   });

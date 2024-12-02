@@ -1,11 +1,12 @@
 const axios = require("axios");
+const express = require('express');
 const fs = require('fs').promises;
 const fetch = require('node-fetch');
 const FormData = require('form-data');
 const path = require('path');
 const sharp = require("sharp");
 const { OpenAI } = require("openai");
-const Replicate = require("replicate");
+const localtunnel = require('localtunnel');
 require("dotenv").config();
 
 async function removeBg(inputPath) {
@@ -13,7 +14,7 @@ async function removeBg(inputPath) {
     const fileBuffer = await fs.readFile(inputPath);
     const formData = new FormData();
     formData.append("size", "preview");
-    formData.append("image_file", fileBuffer, { filename: 'image.png' });
+    formData.append("image_file", fileBuffer, { filename: 'image.jpg' });
 
     const response = await fetch("https://api.remove.bg/v1.0/removebg", {
       method: "POST",
@@ -35,87 +36,152 @@ async function removeBg(inputPath) {
   }
 }
 
+async function producePictureModule(settings, imgNameBase) {
+    console.log("Input settings to producePictureModule", settings);
+    const prompt = settings.prompt;
+    console.log("Upload prompt:", prompt);
 
-async function producePictureModule(settings, imgName) {
-  console.log("Input settings to Produce Picture Module", settings);
-  const prompt = settings.prompt;
-  console.log("Upload prompt:", prompt);
+    const promptContext = prompt.match(/{([^}]+)}/)?.[1].trim() || "";
+    console.log("Prompt context:", promptContext);
 
-  const promptContext = prompt.match(/{([^}]+)}/)?.[1].trim() || "";
-  console.log("Prompt context:", promptContext);
+    const maxAttempts = 5;
+    let attempts = 0;
+    let imageUrls = [];
+    let analysisResult;
 
-  const replicate = new Replicate({
-    auth: process.env.REPLICATE_API_TOKEN,
-  });
+    // Set up Express app for the webhook
+    const app = express();
+    app.use(express.json());
 
-  const maxAttempts = 5;
-  let attempts = 0;
-  let imageUrl, analysisResult;
+    // Start localtunnel to expose the webhook endpoint
+    const port = process.env.PORT || 3000 + Math.floor(Math.random() * 1000);
+    const tunnel = await localtunnel({ port });
 
-  while (attempts < maxAttempts) {
-    attempts++;
-    try {
-      const output = await replicate.run(
-        "black-forest-labs/flux-1.1-pro-ultra",
-        {
-          input: {
-            prompt,
-            aspect_ratio: "2:3",
-            raw: false,
-            safety_tolerance: 6,
-            output_format: "jpg"
-            // Add any additional parameters required by the new model
-          },
+    console.log(`Tunnel established at ${tunnel.url}`);
+
+    // Variable to hold image generation promise
+    let imageGenerationResolve, imageGenerationReject;
+
+    app.post('/webhook', (req, res) => {
+        console.log('Received webhook callback:', req.body);
+
+        const data = req.body;
+
+        if (data.task_id) {
+            if (data.image_urls && data.image_urls.length > 0) {
+                imageUrls = data.image_urls; // Get available images
+                res.sendStatus(200);
+                imageGenerationResolve();
+            } else if (data.status === 'processing') {
+                console.log(`Processing: ${data.percentage}%`);
+                res.sendStatus(200);
+            } else if (data.status === 'failed') {
+                res.sendStatus(200);
+                imageGenerationReject(new Error('Image generation failed on Midjourney side.'));
+            } else {
+                res.sendStatus(200);
+                imageGenerationReject(new Error('Image generation failed or incomplete.'));
+            }
+        } else {
+            res.sendStatus(400);
         }
-      );
+    });
 
-      console.log(output)
+    const server = app.listen(port, () => {
+        console.log(`Webhook server listening on port ${port}`);
+    });
 
-      console.log('Replicate output:', JSON.stringify(output, null, 2));
+    try {
+        while (attempts < maxAttempts) {
+            attempts++;
+            try {
+                const imageGenerationPromise = new Promise((resolve, reject) => {
+                    imageGenerationResolve = resolve;
+                    imageGenerationReject = reject;
+                });
 
-      if (!output || typeof output !== 'string' || output.trim() === '') {
-        throw new Error(`Invalid output from Replicate: ${JSON.stringify(output)}`);
-      }
-      
-      imageUrl = output;
-      analysisResult = await checkImageQualityModule(imageUrl, promptContext);
-      console.log('Analysis result:', JSON.stringify(analysisResult, null, 2));
+                // Initiate image generation with APIFRAME API
+                const response = await axios.post('https://api.apiframe.pro/imagine', {
+                    prompt,
+                    aspect_ratio: "2:3",
+                    webhook_url: `${tunnel.url}/webhook`
+                }, {
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': process.env.APIFRAME_API_KEY
+                    }
+                });
 
-      if (analysisResult.image_quality === "pass") {
-        break;  // Exit the loop if we have a valid image
-      }
+                console.log('APIFRAME imagine response:', response.data);
 
-      console.log(`Image quality check failed. Attempt ${attempts}/${maxAttempts}`);
+                if (!response.data.task_id) {
+                    throw new Error(`Invalid response from APIFRAME API: ${JSON.stringify(response.data)}`);
+                }
+
+                // Wait for image generation to complete via webhook
+                await imageGenerationPromise;
+
+                if (imageUrls.length === 0) {
+                    console.log('No images were generated, retrying...');
+                    throw new Error('No images were generated.');
+                }
+
+                console.log('Image URLs:', imageUrls);
+
+                // Analyze the first image for quality
+                analysisResult = await checkImageQualityModule(imageUrls[0], promptContext);
+                console.log('Analysis result:', JSON.stringify(analysisResult, null, 2));
+
+                if (analysisResult.image_quality === "pass") {
+                    break; // Exit the loop if we have a valid image
+                }
+
+                console.log(`Image quality check failed. Attempt ${attempts}/${maxAttempts}`);
+            } catch (error) {
+                console.error(`Error during attempt ${attempts}:`, error.message);
+            }
+
+            if (attempts < maxAttempts) {
+                const delay = Math.min(1000 * Math.pow(2, attempts), 30000); // Exponential backoff with 30s max
+                await new Promise(resolve => setTimeout(resolve, delay));
+            } else {
+                console.error("Maximum attempts reached. Moving on to the next item.");
+                break;
+            }
+        }
+    } finally {
+        // Clean up the localtunnel connection and server
+        tunnel.close();
+        server.close();
+    }
+
+    // Process any successfully generated images
+    try {
+        const outputPaths = [];
+
+        for (let index = 0; index < imageUrls.length; index++) {
+            const variationIndex = index + 1;
+            const imgName = `${imgNameBase}_${variationIndex}`;
+            const imageUrl = imageUrls[index];
+
+            const downloadedImagePath = await downloadImage(imageUrl, imgName);
+            const processedImagePath = await processImage(downloadedImagePath, imgName);
+
+            await fs.unlink(downloadedImagePath).catch(err => console.error('Error deleting downloaded image:', err));
+
+            outputPaths.push(processedImagePath);
+        }
+
+        return { outputPaths, analysisResult };
     } catch (error) {
-      console.error(`Error during attempt ${attempts}:`, error);
+        console.error("Error in image processing:", error.message);
+        throw error;
     }
-
-    if (attempts < maxAttempts) {
-      const delay = Math.min(1000 * Math.pow(2, attempts), 30000); // Exponential backoff with 30s max
-      await new Promise(resolve => setTimeout(resolve, delay));
-    }
-  }
-
-  if (!imageUrl || analysisResult.image_quality !== "pass") {
-    throw new Error("Failed to generate acceptable image after maximum attempts");
-  }
-
-  // Process the successful image
-  try {
-    const downloadedImagePath = await downloadImage(imageUrl, imgName);
-    const processedImagePath = await processImage(downloadedImagePath, imgName);
-    await fs.unlink(downloadedImagePath);  // Clean up the downloaded image
-
-    return { outputPath: processedImagePath, analysisResult };
-  } catch (error) {
-    console.error("Error in image processing:", error);
-    throw error;
-  }
 }
 
 async function downloadImage(imageUrl, imgName) {
   const response = await axios.get(imageUrl, { responseType: 'arraybuffer' });
-  const downloadedImagePath = path.resolve(`./pictures/downloaded/${imgName}.png`);
+  const downloadedImagePath = path.resolve(`./pictures/downloaded/${imgName}.jpg`);
   await fs.mkdir(path.dirname(downloadedImagePath), { recursive: true });
   await fs.writeFile(downloadedImagePath, Buffer.from(response.data));
   console.log('Image downloaded from Replicate:', downloadedImagePath);
@@ -140,12 +206,26 @@ async function processImage(inputImagePath, imgName) {
     }
   }
 
-  const generatedImagePath = path.resolve(`./pictures/generated/${imgName}.png`);
+  const generatedImagePath = path.resolve(`./pictures/generated/${imgName}.jpg`);
   await fs.mkdir(path.dirname(generatedImagePath), { recursive: true });
   await fs.writeFile(generatedImagePath, Buffer.from(imageData));
   console.log('Processed image saved to:', generatedImagePath);
 
-  const outputPath = await resizePicture(generatedImagePath, imgName);
+  let outputPath;
+
+  if (process.env.IMAGE_RESIZE === 'true') {
+    console.log('Resizing image...');
+    outputPath = await resizePicture(generatedImagePath, imgName);
+    console.log('Image resized, final image path:', outputPath);
+    // Optionally, delete the intermediate generated image if it's no longer needed
+    await fs.unlink(generatedImagePath).catch(e =>
+      console.error('Error deleting generated image:', e)
+    );
+  } else {
+    console.log('Image resizing disabled, using processed image:', generatedImagePath);
+    outputPath = generatedImagePath;
+  }
+
   console.log('Final image path:', outputPath);
 
   return outputPath;
@@ -172,7 +252,7 @@ async function resizePicture(inputImagePath, imgName) {
       })
       .sharpen({ sigma: 5 })
       .modulate({ saturation: 1.4 })
-      .png({ quality: 100 })  // Ensure output is PNG
+      .jpg({ quality: 100 })  // Ensure output is JPG
       .toFile(outputPath);
     console.log('Image resized successfully');
 
@@ -293,4 +373,5 @@ async function checkImageQualityModule(imageUrl, promptContext) {
     throw error;
   }
 }
+
 module.exports = { producePictureModule };

@@ -13,7 +13,6 @@ const uploadDir = path.join(projectRoot, 'pictures', 'toupload');
 async function createExcelFile(data, fileName) {
     const workbook = new ExcelJS.Workbook();
     const worksheet = workbook.addWorksheet('Sheet1');
-
     worksheet.columns = [
         { header: 'Image Path', key: 'imagePath', width: 30 },
         { header: 'Language', key: 'language', width: 10 },
@@ -55,15 +54,21 @@ async function ensureDirectoryExists(dirPath) {
 }
 
 (async () => {
+    const excelData = [];
+    const itemCount = 3;
+    let successfulItems = 0;
+
     try {
         const today = new Date();
         const formattedDate = today.toISOString().slice(0, 10).replace(/-/g, '.');
         const timeStr = today.toTimeString().slice(0, 8);
-
         const launchDate = new Date(process.env.START_DATE);
         const waitingDays = 7;
-        
-        let difference = -Math.floor((today - launchDate.setDate(launchDate.getDate() + waitingDays)) / (1000 * 60 * 60 * 24));
+
+        let difference = -Math.floor(
+            (today - launchDate.setDate(launchDate.getDate() + waitingDays)) / (1000 * 60 * 60 * 24)
+        );
+
         if (difference > 0) {
             console.log(`Still waiting at least ${difference} days for the store to be online.`);
             return;
@@ -74,60 +79,42 @@ async function ensureDirectoryExists(dirPath) {
             console.log("Random timeout to pass bot detection...");
             await pause(true, maxDelaySeconds);
         }
-        
-        console.log("Script starts now");
 
-        const excelData = [];
-        const itemCount = 30;
+        console.log("Script starts now");
 
         // Ensure the redbubble_upload_data directory exists
         await ensureDirectoryExists(uploadDir);
 
-        let successfulItems = 0;
-
         for (let i = 0; i < itemCount; i++) {
             console.log(`Starting item ${i + 1} of ${itemCount}`);
-            
+
             try {
                 console.log(`Generating item ${i + 1} of ${itemCount}`);
-                
-                let pictureSettings;
-                try {
-                    pictureSettings = await paramsGeneratorModule();
-                    console.log("Picture settings before calling producePictureModule:", JSON.stringify(pictureSettings, null, 2));
-                    if (pictureSettings.error) {
-                        throw new Error(pictureSettings.error);
-                    }
-                } catch (error) {
-                    console.error(`Error generating picture settings for item ${i + 1}:`, error.message);
-                    continue;
+
+                const pictureSettings = await paramsGeneratorModule();
+                if (pictureSettings.error) {
+                    throw new Error(pictureSettings.error);
                 }
-                
-                const imgName = `${formattedDate.replace(/\./g, '')}_${timeStr.replace(/:/g, '')}_${i + 1}`;
-                console.log("Generating picture with Flux .1 dev ...");
-                
-                let producePictureResult;
-                try {
-                    console.log("Calling producePictureModule");
-                    producePictureResult = await producePictureModule(pictureSettings, imgName);
-                    console.log(`Full result from producePictureModule for item ${i + 1}:`, JSON.stringify(producePictureResult, null, 2));
-            
-                    if (producePictureResult.error) {
-                        throw new Error(producePictureResult.error);
-                    }
-            
-                    if (!producePictureResult.outputPath || !producePictureResult.analysisResult) {
-                        throw new Error('Invalid result structure from producePictureModule');
-                    }
-            
-                    const { outputPath, analysisResult } = producePictureResult;
-            
-                    if (!analysisResult.new_title || !analysisResult.new_description || !analysisResult.uploadTags) {
-                        console.error(`Incomplete analysis result for item ${i + 1}:`, analysisResult);
-                        continue;
-                    }
-            
+
+                const imgNameBase = `${formattedDate.replace(/\./g, '')}_${timeStr.replace(/:/g, '')}_${i + 1}`;
+                console.log("Generating picture with Midjourney API...");
+
+                const producePictureResult = await producePictureModule(pictureSettings, imgNameBase);
+
+                if (!producePictureResult.outputPaths || !producePictureResult.analysisResult) {
+                    throw new Error('Invalid result structure from producePictureModule');
+                }
+
+                const { outputPaths, analysisResult } = producePictureResult;
+
+                if (!analysisResult.new_title || !analysisResult.new_description || !analysisResult.uploadTags) {
+                    throw new Error('Incomplete analysis result');
+                }
+
+                // For each successfully generated image variation
+                for (const outputPath of outputPaths) {
                     const fullImagePath = path.resolve(outputPath);
+
                     excelData.push({
                         imagePath: fullImagePath,
                         language: "EN",
@@ -137,34 +124,31 @@ async function ensureDirectoryExists(dirPath) {
                         type: "man, woman",
                         color: "black"
                     });
-            
-                    console.log(`Successfully processed item ${i + 1} of ${itemCount}`);
+
                     successfulItems++;
-                } catch (error) {
-                    console.error(`Error in producePictureModule for item ${i + 1}:`, error.message);
-                    continue;
                 }
             } catch (error) {
-                console.error(`Error in main loop for item ${i + 1}:`, error);
+                console.error(`Error processing item ${i + 1}: ${error.message}`);
+                // Continue with the next item without exiting the loop
+                continue;
             }
         }
-        
+
         if (excelData.length > 0) {
             const excelFileName = path.join(uploadDir, `redbubble_upload_data_${formattedDate.replace(/\./g, '_')}.xlsx`);
             try {
                 await createExcelFile(excelData, excelFileName);
             } catch (error) {
-                console.error("Failed to create Excel file:", error);
+                console.error("Failed to create Excel file:", error.message);
             }
         } else {
             console.log("No valid items generated. Excel file not created.");
         }
-       
+    } catch (error) {
+        console.error(`Unexpected error: ${error.message}`);
+    } finally {
         console.log(`Total items attempted: ${itemCount}`);
         console.log(`Total successful items: ${successfulItems}`);
         console.log(`Total items in excelData: ${excelData.length}`);
-                
-    } catch (error) {
-        console.error("ERROR: An error occurred during script execution", error);
     }
 })();
