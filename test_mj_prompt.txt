@@ -1,0 +1,1 @@
+This is a test prompt for Midjourney. Generate an image of a {keyword}. 

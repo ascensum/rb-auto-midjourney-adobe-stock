@@ -1,88 +1,123 @@
-//const { KEYWORDS } = require('./constant/keywords');
-const { KEYWORDS} = require('./constant/keywords_trending_2024.12.01');
 const { OpenAI } = require("openai");
-require('dotenv').config()
+const path = require('path');
+const { logDebug } = require('./utils/logDebug');
+require('dotenv').config();
 
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
-});
+async function paramsGeneratorModule(
+  keywordsData,
+  customSystemPrompt,
+  keywordFilePath,
+  config = {}
+) {
+  const { keywordRandom, openaiModel, mjVersion } = config;
 
-let currentKeywordIndex = 0; // Initialize the keyword index
-
-const paramsGeneratorModule = async() => {
-  let allKeywords = [...new Set([...KEYWORDS.character])];
-  
-  const keywordRandomFlag = process.env.KEYWORD_RANDOM === 'true';
-
-  let keyword;
-
-  if (keywordRandomFlag) {
-    // Random mode
-    allKeywords = shuffleArray(allKeywords);
-    keyword = allKeywords[Math.floor(Math.random() * allKeywords.length)];
-  } else {
-    // Sequential mode
-    keyword = allKeywords[currentKeywordIndex];
-    currentKeywordIndex = (currentKeywordIndex + 1) % allKeywords.length; // Increment index and wrap around if necessary
-  }
-
-  // Generate prompt using GPT-4-mini
-  const prompt = await generatePrompt(keyword);
-
-  const params = {
-    prompt: prompt // The complete prompt for Flux .1 dev
-  };
-
-  console.log("Raw Params object from ParamsGeneratorModule", params);
-  return params;
-}
-
-async function generatePrompt(keyword) {
-  const systemPrompt =   `You are a prompt generation assistant specialized in crafting detailed and optimized text inputs for FLUX AI image generation. Based on user-provided keywords or ideas, your task is to create stunning and precise prompts. Ensure the prompts are tailored to FLUX AI's advanced capabilities, including photorealism, texture accuracy, and style variations. Obey the following guidelines:
-
-  - Subject Description: Start with a detailed and vivid description of the primary subject.
-  - Artistic or Photographic Style: Clearly specify a style. ( e.g., realism, impressionism, post-impressionism, romanticism, neoclassicism, baroque, renaissance, gothic, mannerism, rococo, expressionism, cubism, fauvism, abstract art, surrealism, pop art, minimalism, 
-    abstract expressionism, dadaism, constructivism, de stijl, folk art, chinese ink painting, japanese ukiyo-e, indian miniature painting, islamic art, african tribal art, street art, digital painting, photorealism, fantasy art, visionary art, naïve art, outsider art)."
-  - Specify the type of image (e.g., digital illustration, vector art, flat art, isometric art, 3D rendering, pixel art, low poly art, line art, gradient art, concept art, character design, storyboard art, matte painting, infographic art, motion graphics, collage art, anime/manga art, comic book art, fantasy art, 
-    sci-fi art).
-  - Attributes and Details: Describe key features, colors, materials, or textures. For example, "glossy surfaces," "gold accents," or "rustic wood textures."
-  - Lighting and Environment: Add depth by specifying the environment, time of day, weather, or specific lighting conditions (e.g., "soft ambient glow," "dramatic backlight").
-  - Mood and Atmosphere: Include emotive or thematic elements, such as "serene and peaceful," "dramatic and intense," or "whimsical and magical."
-  - Technical Enhancements: Use keywords for FLUX features, such as "8K resolution," "ultra-sharp detail," "HDR lighting," "macro focus," or "bokeh effect."
-  - Dynamic Elements: If applicable, include motion or energy in the scene, like "flowing water," "wind-swept hair," or "dancing flames."
-  - The prompt should be in English.
-  - Do not describe concepts as "Real", "realistic", "photo", or "photograph" if they can't be real.
-  - Choose the best image type and art style for the given keyword.
-  - Do not use any words that are before : character in the prompt guidelines`;
-
-  const userMessage = `Create a detailed description of the image, including all elements, styles, and enhancements for FLUX AI using the above formula with a ${keyword} as 'Subject Description' in prompt structure. The tone should be inspiring, clear, and precise.`;
+  const openai = new OpenAI({
+    apiKey: process.env.OPENAI_API_KEY,
+  });
 
   try {
-    const response = await openai.chat.completions.create({
-      model: "gpt-4o-mini", // Ensure this is the correct model name
+    let systemPrompt;
+    let userPrompt;
+    let selectedKeyword = ''; // For promptContext
+
+    // --- CSV Templating Logic ---
+    if (typeof keywordsData === 'object' && !Array.isArray(keywordsData)) {
+      logDebug('CSV data detected. Using templating engine.');
+      const selectedRow = keywordsData; // Already selected in index.js
+
+      logDebug('Selected CSV row:', selectedRow);
+
+      // Use the custom system prompt as the template
+      if (!customSystemPrompt) {
+        throw new Error('System prompt template is required for CSV mode');
+      }
+
+      // Replace variables in the system prompt template
+      systemPrompt = customSystemPrompt;
+      for (const header in selectedRow) {
+        const placeholder = new RegExp(`\\$\\{\\{${header}\\}\\}`, 'g');
+        systemPrompt = systemPrompt.replace(placeholder, selectedRow[header]);
+      }
+      
+      // Store the first column value for context
+      selectedKeyword = selectedRow[Object.keys(selectedRow)[0]];
+      
+      // Set up the user prompt
+      userPrompt = 'Generate one prompt now based on your instructions.';
+      
+      logDebug('Final system prompt after template processing:', systemPrompt);
+    } 
+    // --- TXT Logic ---
+    else {
+      logDebug('TXT data detected. Using standard keyword logic.');
+      let keywords = Array.isArray(keywordsData) ? keywordsData : [keywordsData];
+      selectedKeyword = keywords[0]; // Already selected in index.js
+
+      logDebug('Selected keyword:', selectedKeyword);
+
+      if (customSystemPrompt) {
+        // If we have a template, use it with the keyword as Subject
+        systemPrompt = customSystemPrompt.replace(/\$\{\{Subject\}\}/g, selectedKeyword);
+        // Set empty values for other template variables
+        systemPrompt = systemPrompt
+          .replace(/\$\{\{Setting\}\}/g, '')
+          .replace(/\$\{\{Style\}\}/g, '')
+          .replace(/\$\{\{Mood\}\}/g, '');
+        userPrompt = 'Generate one prompt now based on your instructions.';
+      } else {
+        systemPrompt = `You are an assistant creating high-quality stock photo prompts for an AI image generator. Your response must be a single JSON object with one key: "prompt". The prompt should describe a stock photo image based on the provided keywords. The prompt must be in a single line and in English.`;
+        userPrompt = `Create a prompt for this keyword: ${selectedKeyword}`;
+      }
+    }
+
+    const completion = await openai.chat.completions.create({
+      model: openaiModel,
       messages: [
         { role: "system", content: systemPrompt },
-        { role: "user", content: userMessage }
+        { role: "user", content: userPrompt }
       ],
       temperature: 0.7,
     });
 
-    const generatedPrompt = response.choices[0].message.content;
-    return generatedPrompt;
+    const response = completion.choices[0].message.content;
+    logDebug('OpenAI response:', response);
+
+    let parsedResponse;
+    try {
+      // Remove any markdown code blocks and trim whitespace
+      const cleanedResponse = response.replace(/```json\n|\n```|```/g, '').trim();
+      
+      // Try to parse as JSON first
+      try {
+        parsedResponse = JSON.parse(cleanedResponse);
+      } catch (jsonError) {
+        // If it's not JSON, check if it's a quoted string
+        if (cleanedResponse.startsWith('"') && cleanedResponse.endsWith('"')) {
+          // Remove the quotes and use as prompt
+          parsedResponse = { prompt: cleanedResponse.slice(1, -1) };
+        } else {
+          // Use as-is
+          parsedResponse = { prompt: cleanedResponse };
+        }
+      }
+    } catch (error) {
+      logDebug('Error processing response. Using raw response as prompt.');
+      parsedResponse = { prompt: response };
+    }
+
+    // Add version to the prompt if specified
+    const versionSuffix = mjVersion ? ` --v ${mjVersion}` : '';
+    parsedResponse.prompt += versionSuffix;
+
+    return {
+      prompt: parsedResponse.prompt,
+      promptContext: selectedKeyword
+    };
+
   } catch (error) {
-    console.error("Error generating prompt:", error);
-    return ""; // Return an empty string or a default prompt in case of error
+    console.error('Error in paramsGeneratorModule:', error);
+    throw error;
   }
 }
 
-function shuffleArray(array) {
-  for (let i = array.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [array[i], array[j]] = [array[j], array[i]];
-  }
-  return array;
-}
-
-module.exports = {
-  paramsGeneratorModule
-}
+module.exports = { paramsGeneratorModule };
