@@ -401,8 +401,6 @@ You can reach out to me on the following platforms regarding this repository:
 - **Facebook:** [Vjatseslav Jertsalov](https://www.facebook.com/vjatseslav.jertsalov/)
 - **Discord:** [Join my Discord Server](https://discord.gg/KNnVz77e)
 
-*Note: Please replace the placeholder links with your actual social media accounts.*
-
 ### Support Options
 Please note that I am not committing to providing ongoing support, feature updates, or accepting pull requests. You are, however, completely free to fork this repository and adapt it for your own needs as you see fit under the terms of the MIT License.
 
