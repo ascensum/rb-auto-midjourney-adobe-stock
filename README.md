@@ -30,7 +30,9 @@ Before you begin, ensure you have the following:
 1.  **Node.js:** Version 16 or higher is recommended. Download from [nodejs.org](https://nodejs.org/).
 2.  **Git:** Used to clone the repository. Download from [git-scm.com](https://git-scm.com/).
 3.  **API Keys:**
-    *   **PiAPI (for Midjourney):** Get your key from [piapi.ai](https://piapi.ai/).
+    *   **PiAPI (for Midjourney):** Get your key from [piapi.ai](https://piapi.ai/). **Important:** PiAPI offers two options:
+        *   **Use PiAPI's shared Midjourney accounts** (recommended): Higher cost but no risk of your personal Midjourney account being banned for automation. PiAPI manages the accounts and handles any potential issues.
+        *   **Use your own Midjourney account** (advanced): Lower cost but carries the risk of your personal Midjourney account being banned if detected as automated usage. Only recommended if you understand the risks.
     *   **OpenAI:** Get your key from [openai.com](https://openai.com/). Ensure your account has access to the model you intend to use (e.g., `gpt-4o`, `gpt-4o-mini`).
     *   **Remove.bg (Optional):** Get your key from [remove.bg](https://www.remove.bg/) if you plan to use the background removal feature.
 
